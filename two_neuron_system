@@ -1,0 +1,79 @@
+module two_neuron_system (
+    input wire clk,
+    input wire rst_n,
+    input wire [7:0] input_synapse_0, // Input per il Neurone 0
+    input wire [7:0] input_synapse_1, // Input per il Neurone 1
+    input wire time_ref_event,        // Segnale di tempo condiviso
+    output reg spike_neuron_0,        // Output spike Neurone 0
+    output reg spike_neuron_1         // Output spike Neurone 1
+);
+
+    // --- 1. MEMORIA DEGLI STATI ---
+    // Usiamo due registri invece di una RAM per semplicità
+    reg [7:0] v_mem_n0; // Memoria Neurone 0
+    reg [7:0] v_mem_n1; // Memoria Neurone 1
+
+    // Parametri fissi (per esempio)
+    wire [7:0] leak = 8'd5;
+    wire [7:0] threshold = 8'd100;
+
+    // --- 2. SCHEDULER (MULTIPLEXER) ---
+    // Un semplice bit che alterna: 0 -> Neurone 0, 1 -> Neurone 1
+    reg current_neuron_id; 
+    
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) current_neuron_id <= 0;
+        else current_neuron_id <= ~current_neuron_id; // Alterna 0, 1, 0, 1...
+    end
+
+    // Segnali che entrano ed escono dal Core
+    reg [7:0] core_v_current;
+    reg [7:0] core_input;
+    wire [7:0] core_v_next;
+    wire core_spike_out;
+
+    // Multiplexer: Seleziona quali dati mandare al core in base all'ID
+    always @(*) begin
+        if (current_neuron_id == 0) begin
+            core_v_current = v_mem_n0;
+            core_input = input_synapse_0;
+        end else begin
+            core_v_current = v_mem_n1;
+            core_input = input_synapse_1;
+        end
+    end
+
+    // --- 3. ISTANZA DEL NEURON CORE (La Logica Condivisa) ---
+    // Notare: È istanziato UNA sola volta!
+    neuron_core my_shared_core (
+        .clk(clk), // Il core è combinatorio nell'esempio precedente, ma qui lo usiamo nel flusso
+        .rst_n(rst_n),
+        .v_mem_current(core_v_current),
+        .synaptic_input(core_input),
+        .leak_strength(leak),
+        .threshold(threshold),
+        .time_ref_event(time_ref_event),
+        .v_mem_next(core_v_next),
+        .spike_out(core_spike_out)
+    );
+
+    // --- 4. SCRITTURA DEI RISULTATI (UPDATE) ---
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            v_mem_n0 <= 0;
+            v_mem_n1 <= 0;
+            spike_neuron_0 <= 0;
+            spike_neuron_1 <= 0;
+        end else begin
+            // Aggiorna SOLO il neurone che è stato appena processato
+            if (current_neuron_id == 0) begin
+                v_mem_n0 <= core_v_next;
+                spike_neuron_0 <= core_spike_out;
+            end else begin
+                v_mem_n1 <= core_v_next;
+                spike_neuron_1 <= core_spike_out;
+            end
+        end
+    end
+
+endmodule
